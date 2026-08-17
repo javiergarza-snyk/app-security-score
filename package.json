@@ -1,0 +1,13 @@
+{
+  "name": "app-security-score",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scores a public GitHub repo 0-10 on security posture (Snyk SCA + SAST), running entirely inside an ephemeral Docker sandbox.",
+  "type": "module",
+  "bin": {
+    "app-security-score": "./cli.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
