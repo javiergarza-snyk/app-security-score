@@ -21,16 +21,37 @@ into either container.
 
 ## Requirements
 
-- Docker Desktop (running)
-- A Snyk **personal API token** (Account Settings → Auth Token at
-  https://app.snyk.io/account) — not your CLI's OAuth session token, since
-  that's exported into the credentialed stage and a long-lived, narrowly
-  scoped token is safer to hand to a sandbox.
+- **Docker Desktop**, installed and running (`docker info` should succeed)
+- **Node.js >= 20** — used to run the host-side `cli.mjs` orchestrator (Docker
+  does the actual cloning/scanning; Node here just drives `docker` commands)
+- **A Snyk account and Personal Access Token (PAT)** — see setup below
+
+## Setup
+
+1. **Create a free Snyk account** (skip if you already have one):
+   [app.snyk.io/signup](https://app.snyk.io/signup?utm_source=evt_260101_aiseceng_meetups_amer_sf_2026&utm_medium=aisecurity-engineer&utm_campaign=sfhackathon)
+
+2. **Create a Personal Access Token (PAT)**, following Snyk's official docs:
+   [Personal Access Tokens (PATs)](https://docs.snyk.io/developer-tools/snyk-api/authentication-for-api/personal-access-tokens-pats)
+
+   In short: go to your [Snyk account settings](https://app.snyk.io/account) →
+   **Personal Access Tokens** tab → give it a name and expiry (max 90 days) →
+   **Generate new token** → copy it immediately (Snyk only shows it once).
+
+   Use a PAT here, not the OAuth session token from `snyk auth` — the PAT is
+   scoped, has a fixed expiry, and is what actually gets exported into the
+   credentialed container stage below, so a narrowly-scoped, revocable token
+   is the safer thing to hand to a sandbox.
+
+3. **Export it as `SNYK_TOKEN`** in your shell:
+
+   ```
+   export SNYK_TOKEN=<your-personal-access-token>
+   ```
 
 ## Usage
 
 ```
-export SNYK_TOKEN=<your-snyk-api-token>
 node cli.mjs https://github.com/<owner>/<repo>
 ```
 
