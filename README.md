@@ -49,16 +49,57 @@ into either container.
    export SNYK_TOKEN=<your-personal-access-token>
    ```
 
+   Or keep it in a local file and `source` it instead of typing it inline
+   every time (handy since the token shouldn't be typed into shell history
+   or committed anywhere). Create e.g. `~/.secrets/snyk.env`:
+
+   ```
+   SNYK_TOKEN=<your-personal-access-token>
+   ```
+
+   Then load it into your current shell before running the CLI:
+
+   ```
+   set -a; source ~/.secrets/snyk.env; set +a
+   node cli.mjs https://github.com/<owner>/<repo>
+   ```
+
+   `set -a` marks every variable `source` picks up for export, so `SNYK_TOKEN`
+   is visible to the `docker` commands `cli.mjs` spawns — plain `source`
+   without it only sets a shell variable, which child processes never see.
+   Keep that file out of any git repo (e.g. `chmod 600 ~/.secrets/snyk.env`)
+   and re-`source` it in every new terminal/session, since exported env vars
+   don't persist across shells.
+
 ## Usage
 
 ```
 node cli.mjs https://github.com/<owner>/<repo>
 ```
 
-Score multiple repos in one call:
+### Scanning multiple repos
+
+Pass any number of repo URLs in one call — they're scanned one at a time,
+each getting its own fresh sandbox (fresh clone, fresh Docker volume, fresh
+containers), and each prints its own result plus a `reports/<owner>__<repo>.json`
+file:
 
 ```
-node cli.mjs <repo-url-1> <repo-url-2> ...
+node cli.mjs \
+  https://github.com/<owner-1>/<repo-1> \
+  https://github.com/<owner-2>/<repo-2> \
+  https://github.com/<owner-3>/<repo-3>
+```
+
+Combined with the token file from Setup step 3, a full multi-repo run looks
+like:
+
+```
+set -a; source ~/.secrets/snyk.env; set +a
+node cli.mjs \
+  https://github.com/QuantumPhy/agentshare \
+  https://github.com/digitalshare/forgelab \
+  https://github.com/Shalupanwar06/TickTickGo
 ```
 
 Force a rebuild of the sandbox image (e.g. after editing `docker/*.mjs`):
@@ -91,3 +132,10 @@ because a scan step didn't have anything to check.
 If the Docker build fails with a certificate error (e.g. behind Zscaler),
 drop your corporate root CA `.crt` into `docker/certs/` — see
 `docker/certs/README.md`. Files there are gitignored and never published.
+
+## Working on this repo with a coding agent
+
+If you're using Claude Code, Codex, Cursor, or similar, see `AGENTS.md` for
+how to run the tool/tests and the branch → changelog → version bump →
+tests → Snyk scan → ask-to-merge workflow this repo follows for every
+change.

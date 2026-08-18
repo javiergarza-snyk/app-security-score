@@ -3,7 +3,18 @@
 All notable changes to this project are documented in this file.
 Versioning follows `major.minor` (semver-style, patch omitted for this project's size).
 
-## [1.1.0] - Unreleased
+## [1.2.0] - Unreleased
+
+### Added
+- `AGENTS.md` — instructions for coding agents (Claude Code, Codex, Cursor,
+  etc.) working in this repo: how to run the tool, requirements, the
+  branch/changelog/version/test/scan workflow, and the credential-isolation
+  design so agents don't accidentally weaken it. `CLAUDE.md` points here.
+- README: documented scanning multiple repos in one `cli.mjs` call, and an
+  example of keeping `SNYK_TOKEN` in a local file (e.g. `~/.secrets/snyk.env`)
+  and `source`-ing it instead of typing the token inline.
+
+## [1.1.0] - 2026-08-18
 
 ### Added
 - `CHANGELOG.md` (this file) to track changes going forward.
