@@ -1,21 +1,27 @@
 # Ephemeral scan sandbox: clones + builds + scans an untrusted public repo
 # entirely inside this container. No host paths are ever bind-mounted in —
 # only an anonymous, per-run Docker volume is shared between the two stages.
-FROM node:20-bookworm-slim
+FROM node:22-alpine
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Alpine's apk fetches over https by default; switch to http so package
+# installs don't need a trusted cert yet (integrity is still enforced via
+# apk's own package signing, same trust model Debian's apt uses over http).
+RUN sed -i 's/https:/http:/' /etc/apk/repositories \
+    && apk add --no-cache \
       git \
       python3 \
-      python3-venv \
-      python3-pip \
-      build-essential \
-      ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+      python3-dev \
+      py3-pip \
+      build-base \
+      linux-headers \
+      ca-certificates
 
 # Trust any corporate root CA dropped in docker/certs/ (see docker/certs/README.md).
 # Lets the build survive TLS-inspecting proxies (e.g. Zscaler) without baking a
-# specific corporate cert into the portable Dockerfile itself.
-COPY docker/certs/ /usr/local/share/ca-certificates/extra/
+# specific corporate cert into the portable Dockerfile itself. Alpine's
+# update-ca-certificates only picks up certs directly in this directory, not
+# subdirectories, so copy flat (unlike Debian's .../extra/ convention).
+COPY docker/certs/ /usr/local/share/ca-certificates/
 RUN update-ca-certificates || true
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
