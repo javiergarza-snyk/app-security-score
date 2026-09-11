@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file.
 Versioning follows `major.minor` (semver-style, patch omitted for this project's size).
 
+## [1.4.0] - Unreleased
+
+### Added
+- Local-clone scanning: `node cli.mjs <local-path>` now scores a repo you've
+  already cloned to disk, in addition to a GitHub URL. The local directory is
+  streamed into the same ephemeral, per-run Docker volume as a tar archive
+  piped through `docker cp -` (never a bind mount), excluding vendored/build
+  directories (`node_modules`, `.venv`, `.git`, etc.) so a pre-existing local
+  install isn't dragged in, and then `chown -R root:root` inside the volume
+  (via a normal, non-hardened container) so the copy's ownership matches what
+  a fresh `git clone` would produce. That last step matters: the install/scan
+  containers run with `--cap-drop ALL`, so without it, container-root can't
+  write into a directory that still carries the host user's original uid/gid
+  — install/build scripts still only ever run inside the sandbox, and the
+  two-stage credential isolation is unchanged.
+
 ## [1.3.0] - Unreleased
 
 ### Changed

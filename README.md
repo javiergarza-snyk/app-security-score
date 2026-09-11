@@ -77,6 +77,19 @@ into either container.
 node cli.mjs https://github.com/<owner>/<repo>
 ```
 
+### Scanning a local clone
+
+Pass a local directory instead of a URL to scan a repo you've already cloned:
+
+```
+node cli.mjs /path/to/local/clone
+```
+
+The local directory is copied into the same ephemeral, per-run Docker volume
+used for a remote clone (via `docker cp`, never a bind mount) — its
+install/build scripts still only ever run inside the sandbox, never against
+your actual working copy.
+
 ### Scanning multiple repos
 
 Pass any number of repo URLs in one call — they're scanned one at a time,
