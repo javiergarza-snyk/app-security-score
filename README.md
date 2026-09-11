@@ -92,16 +92,24 @@ your actual working copy.
 
 ### Scanning multiple repos
 
-Pass any number of repo URLs in one call — they're scanned one at a time,
-each getting its own fresh sandbox (fresh clone, fresh Docker volume, fresh
-containers), and each prints its own result plus a `reports/<owner>__<repo>.json`
-file:
+Pass any number of repo URLs (or local paths) in one call — each gets its own
+fresh sandbox (fresh clone, fresh Docker volume, fresh containers) and its own
+`reports/<owner>__<repo>.json` file. Up to 4 run concurrently by default;
+each one's progress output is printed as a single block as soon as it
+finishes, so concurrent runs don't interleave:
 
 ```
 node cli.mjs \
   https://github.com/<owner-1>/<repo-1> \
   https://github.com/<owner-2>/<repo-2> \
   https://github.com/<owner-3>/<repo-3>
+```
+
+Override the concurrency limit with `SCORE_CONCURRENCY` (e.g. lower it on a
+resource-constrained machine, or raise it if you have headroom):
+
+```
+SCORE_CONCURRENCY=8 node cli.mjs <repo-1> <repo-2> ... <repo-10>
 ```
 
 Combined with the token file from Setup step 3, a full multi-repo run looks

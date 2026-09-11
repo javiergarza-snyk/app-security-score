@@ -16,12 +16,17 @@
 // one-time snapshot copy, so the repo's own install/build scripts still only
 // ever run against the in-container copy.
 //
+// Multiple targets run concurrently (up to CONCURRENCY at a time — override
+// with SCORE_CONCURRENCY). Each target's own progress/diagnostic lines are
+// buffered and flushed as one block right when that target finishes, so
+// concurrent runs don't interleave into unreadable output.
+//
 // Usage:
 //   SNYK_TOKEN=xxxx node cli.mjs <repo-url|local-path> [<repo-url|local-path> ...]
 //   SNYK_TOKEN=xxxx node cli.mjs --rebuild <repo-url>   # force image rebuild
 
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +36,7 @@ import { SKIP_DIRS } from "./docker/lib.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPORTS_DIR = path.join(HERE, "reports");
 const IMAGE = "app-security-score:latest";
+const CONCURRENCY = Math.max(1, Number(process.env.SCORE_CONCURRENCY) || 4);
 
 const DOCKER_HARDENING = [
   "--rm",
@@ -80,13 +86,42 @@ function ensureImage(rebuild) {
   if (build.status !== 0) fail("docker build failed");
 }
 
-function runStage(args, { env, timeoutMs }) {
-  return spawnSync("docker", args, {
-    encoding: "utf8",
-    timeout: timeoutMs,
-    maxBuffer: 1024 * 1024 * 64,
-    env: { ...process.env, ...env },
-    stdio: ["ignore", "pipe", "inherit"], // stdout captured, stderr streamed live
+// Async replacement for spawnSync so multiple targets' docker commands can
+// genuinely run concurrently (spawnSync blocks the whole event loop, which
+// would serialize "concurrent" targets the moment any one of them shells out).
+// stdout/stderr are captured rather than inherited — the caller decides when
+// to surface them, so concurrent targets' output doesn't interleave.
+function run(cmd, args, { env, input, timeoutMs } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { env: { ...process.env, ...env } });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+        }, timeoutMs)
+      : null;
+
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (error) => {
+      if (timer) clearTimeout(timer);
+      resolve({ status: null, stdout, stderr, error });
+    });
+    child.on("close", (status) => {
+      if (timer) clearTimeout(timer);
+      resolve({
+        status,
+        stdout,
+        stderr,
+        error: timedOut ? new Error(`command timed out after ${timeoutMs}ms`) : undefined,
+      });
+    });
+
+    if (input !== undefined) child.stdin.end(input);
+    else child.stdin.end();
   });
 }
 
@@ -99,18 +134,14 @@ function runStage(args, { env, timeoutMs }) {
 // hardened (--cap-drop ALL) install/scan containers can't rmdir/rewrite, and
 // (2) a fresh install inside the sandbox is what we want anyway, matching
 // what a freshly cloned repo would look like.
-function copyLocalIntoVolume(localPath, volume) {
+async function copyLocalIntoVolume(localPath, volume, log) {
   const helper = `app-security-score-copy-${randomUUID()}`;
-  const mkdirRepo = spawnSync("docker", ["run", "--rm", "-v", `${volume}:/work`, IMAGE, "mkdir", "-p", "/work/repo"], {
-    encoding: "utf8",
-  });
+  const mkdirRepo = await run("docker", ["run", "--rm", "-v", `${volume}:/work`, IMAGE, "mkdir", "-p", "/work/repo"]);
   if (mkdirRepo.status !== 0) {
     return { ok: false, error: `failed to prepare volume: ${(mkdirRepo.stderr || "").trim()}` };
   }
 
-  const create = spawnSync("docker", ["create", "--name", helper, "-v", `${volume}:/work`, IMAGE, "true"], {
-    encoding: "utf8",
-  });
+  const create = await run("docker", ["create", "--name", helper, "-v", `${volume}:/work`, IMAGE, "true"]);
   if (create.status !== 0) {
     return { ok: false, error: `failed to create copy helper: ${(create.stderr || "").trim()}` };
   }
@@ -122,19 +153,15 @@ function copyLocalIntoVolume(localPath, volume) {
     // macOS's bsdtar embeds AppleDouble/xattr metadata Linux tar can't read back;
     // strip it so the archive extracts cleanly inside the (Linux) container.
     const macArgs = process.platform === "darwin" ? ["--no-mac-metadata"] : [];
-    const tar = spawnSync(
+    const tar = await run(
       "tar",
       ["--no-xattrs", ...macArgs, "-cf", tarPath, ...excludeArgs, "-C", localPath, "."],
-      { encoding: "utf8", env: { ...process.env, COPYFILE_DISABLE: "1" } }
+      { env: { COPYFILE_DISABLE: "1" } }
     );
     if (tar.status !== 0) {
       return { ok: false, error: `tar failed: ${(tar.stderr || "").trim()}` };
     }
-    const cp = spawnSync("docker", ["cp", "-", `${helper}:/work/repo`], {
-      input: readFileSync(tarPath),
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024 * 64,
-    });
+    const cp = await run("docker", ["cp", "-", `${helper}:/work/repo`], { input: readFileSync(tarPath) });
     if (cp.status !== 0) {
       return { ok: false, error: `docker cp failed: ${(cp.stderr || "").trim()}` };
     }
@@ -143,47 +170,49 @@ function copyLocalIntoVolume(localPath, volume) {
     // write into a foreign-owned directory — normalize ownership to root here
     // (with a normal, non-hardened container) so it behaves like a fresh
     // `git clone`, which is always root-owned since root wrote it.
-    const chown = spawnSync("docker", ["run", "--rm", "-v", `${volume}:/work`, IMAGE, "chown", "-R", "root:root", "/work/repo"], {
-      encoding: "utf8",
-    });
+    const chown = await run("docker", ["run", "--rm", "-v", `${volume}:/work`, IMAGE, "chown", "-R", "root:root", "/work/repo"]);
     if (chown.status !== 0) {
       return { ok: false, error: `chown failed: ${(chown.stderr || "").trim()}` };
     }
     return { ok: true };
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
-    spawnSync("docker", ["rm", "-f", helper], { encoding: "utf8" });
+    await run("docker", ["rm", "-f", helper]);
   }
 }
 
-function scoreRepo(target, token) {
+async function scoreRepo(target, token, log) {
   const local = isLocalTarget(target);
   const label = local ? path.resolve(target) : target;
   const volume = `app-security-score-${randomUUID()}`;
-  console.error(`\n=== ${label}${local ? " (local)" : ""} ===`);
-  spawnSync("docker", ["volume", "create", volume], { encoding: "utf8" });
+  log(`=== ${label}${local ? " (local)" : ""} ===`);
+  await run("docker", ["volume", "create", volume]);
 
   try {
     if (local) {
-      console.error("[local] copying repo into sandbox volume...");
-      const copied = copyLocalIntoVolume(label, volume);
+      log("[local] copying repo into sandbox volume...");
+      const copied = await copyLocalIntoVolume(label, volume, log);
       if (!copied.ok) return { repoUrl: label, error: copied.error, score: null };
     }
 
-    console.error(`[stage 1/2] ${local ? "install" : "clone + install"} (no credentials)...`);
-    const install = runStage(
+    log(`[stage 1/2] ${local ? "install" : "clone + install"} (no credentials)...`);
+    const install = await run(
+      "docker",
       ["run", ...DOCKER_HARDENING, "-v", `${volume}:/work`, IMAGE, "node", "/app/install.mjs", local ? "--local" : label],
-      { env: {}, timeoutMs: 5 * 60_000 }
+      { timeoutMs: 5 * 60_000 }
     );
+    if (install.stderr.trim()) log(install.stderr.trim());
     if (install.status !== 0 && install.error) {
       return { repoUrl: label, error: `stage1 failed: ${install.error.message}`, score: null };
     }
 
-    console.error("[stage 2/2] snyk test + snyk code test (credentialed)...");
-    const scan = runStage(
+    log("[stage 2/2] snyk test + snyk code test (credentialed)...");
+    const scan = await run(
+      "docker",
       ["run", ...DOCKER_HARDENING, "-v", `${volume}:/work`, "-e", "SNYK_TOKEN", IMAGE, "node", "/app/scan.mjs", label],
       { env: { SNYK_TOKEN: token }, timeoutMs: 8 * 60_000 }
     );
+    if (scan.stderr.trim()) log(scan.stderr.trim());
     const stdout = (scan.stdout ?? "").trim();
     if (!stdout) {
       return { repoUrl: label, error: `stage2 produced no output (exit ${scan.status})`, score: null };
@@ -194,7 +223,7 @@ function scoreRepo(target, token) {
       return { repoUrl: label, error: "stage2 output was not valid JSON", score: null };
     }
   } finally {
-    spawnSync("docker", ["volume", "rm", "-f", volume], { encoding: "utf8" });
+    await run("docker", ["volume", "rm", "-f", volume]);
   }
 }
 
@@ -236,7 +265,22 @@ function persistReport(result) {
   writeFileSync(path.join(REPORTS_DIR, `${slug}.json`), JSON.stringify(result, null, 2));
 }
 
-function main() {
+// Runs `worker` over `items` with at most `limit` in flight at once. Unlike
+// Promise.all(items.map(worker)), this caps concurrency instead of launching
+// everything at once, and each item is handled (here: logged + persisted) the
+// moment it finishes rather than waiting for the whole batch.
+export async function forEachWithConcurrency(items, limit, worker) {
+  let next = 0;
+  async function runNext() {
+    while (next < items.length) {
+      const item = items[next++];
+      await worker(item);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runNext));
+}
+
+async function main() {
   const argv = process.argv.slice(2);
   const rebuild = argv.includes("--rebuild");
   const targets = argv.filter((a) => a !== "--rebuild");
@@ -248,15 +292,18 @@ function main() {
   checkPrereqs(token);
   ensureImage(rebuild);
 
-  for (const target of targets) {
-    const result = scoreRepo(target, token);
+  await forEachWithConcurrency(targets, CONCURRENCY, async (target) => {
+    const lines = [];
+    const log = (msg) => lines.push(msg);
+    const result = await scoreRepo(target, token, log);
+    if (lines.length) console.error(`\n${lines.join("\n")}`);
     printResult(result);
     persistReport(result);
-  }
+  });
 }
 
 // Import-safe: pure helpers above (isLocalTarget) are unit-testable without
 // running the CLI as a side effect.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main();
+  main().catch((err) => fail(err?.message ?? String(err)));
 }

@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 Versioning follows `major.minor` (semver-style, patch omitted for this project's size).
 
+## [1.5.0] - Unreleased
+
+### Changed
+- Multiple repo/local-path targets passed in one `cli.mjs` invocation now scan
+  concurrently (default 4 at a time, override with `SCORE_CONCURRENCY`)
+  instead of one at a time. Each target's `docker` calls were switched from
+  `spawnSync` to an async `spawn`-based helper, since a blocking `spawnSync`
+  call would otherwise serialize "concurrent" targets the instant any one of
+  them shells out. Each target's progress/diagnostic lines are now buffered
+  and flushed as one block right when that target finishes (rather than
+  streamed live), so concurrent targets' output doesn't interleave.
+
 ## [1.4.0] - Unreleased
 
 ### Added
