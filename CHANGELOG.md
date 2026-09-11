@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file.
 Versioning follows `major.minor` (semver-style, patch omitted for this project's size).
 
+## [1.3.0] - Unreleased
+
+### Changed
+- Sandbox `Dockerfile` base image switched from `node:20-bookworm-slim` to
+  `node:22-alpine`. The Debian bookworm base carried 127 unique OS-level
+  vulnerabilities (4 critical, 14 high — none with an available fix in
+  Debian 12's perl/util-linux/zlib packages, so no Debian tag bump could
+  reach zero); `node:22-alpine` has 10, all low severity, none critical/high.
+  `apt-get` packages were swapped for their `apk` equivalents (`build-base`,
+  `python3-dev`, `linux-headers` added for native npm/Python extension
+  builds); the apk repository URLs were switched to `http://` (package
+  integrity is enforced by apk's own signing, not transport TLS — matching
+  the pattern the Debian base already used) since some `https://` egress
+  paths get intercepted by TLS-inspecting corporate proxies before the
+  `docker/certs/` CA trust step runs; and the `docker/certs/` corporate-CA
+  `COPY` destination was flattened (Alpine's `update-ca-certificates`,
+  unlike Debian's, doesn't scan subdirectories). Verified npm native addons
+  (node-gyp), pip C-extension builds, and `uv sync` all still work under
+  musl libc.
+
 ## [1.2.0] - Unreleased
 
 ### Added
