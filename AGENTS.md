@@ -64,7 +64,10 @@ Do not skip steps 3-6 even for small changes.
 - **Don't bind-mount host paths into either container stage.** The whole
   point of the sandbox is that a scanned repo's build tooling never touches
   this machine's filesystem. Only the ephemeral, per-run named Docker volume
-  should be shared between the two stages.
+  should be shared between the two stages. Local-path targets (see
+  `isLocalTarget`/`copyLocalIntoVolume` in `cli.mjs`) are copied in with
+  `docker cp` — a one-time snapshot copy, not a live mount — precisely so this
+  rule still holds for them.
 - **Don't commit real corporate CA certs.** `docker/certs/*.crt` is
   gitignored on purpose (see `docker/certs/README.md`) — it's a local-only
   escape hatch for TLS-inspecting proxies, not something to publish.
