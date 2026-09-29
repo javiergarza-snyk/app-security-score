@@ -304,6 +304,6 @@ async function main() {
 
 // Import-safe: pure helpers above (isLocalTarget) are unit-testable without
 // running the CLI as a side effect.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1])) {
   main().catch((err) => fail(err?.message ?? String(err)));
 }
